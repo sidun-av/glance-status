@@ -1,0 +1,34 @@
+# This file documents the config.yml format — copy it, fill in real values
+# (or set the referenced environment variables and leave the ${...}
+# placeholders as-is), and mount it as /config.yml. Connection fields use
+# ${VAR} placeholders expanded from real environment variables at container
+# start (see docker-compose.example.yml) — never commit real URLs/tokens
+# here. PromQL queries are not secrets and are filled in with real,
+# working defaults for a standard node_exporter + Prometheus setup.
+
+title: Server Health   # env: TITLE
+
+grafana:
+  url: ${GRAFANA_URL}            # e.g. http://grafana:3000 — reachable from this container
+  token: ${GRAFANA_TOKEN}        # Grafana Service Account token (Viewer + Data Source Reader)
+  datasource_uid: CHANGE_ME      # Grafana → Connections → Data sources → your datasource → UID is in the URL
+
+metrics:
+  cpu_query: '100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
+  ram_query: '100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))'
+  disk_internal_query: '100 * (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}))'
+  disk_external_query: '100 * (1 - (node_filesystem_avail_bytes{mountpoint="/mnt/media-storage"} / node_filesystem_size_bytes{mountpoint="/mnt/media-storage"}))'   # adjust the mountpoint to your own second disk
+
+speedtest:
+  url: ${SPEEDTEST_URL}          # e.g. http://speedtest-tracker:80 — reachable from this container
+  token: ${SPEEDTEST_TOKEN}      # speedtest-tracker Admin → API Tokens, scope: results:read
+
+services_status_url: ${SERVICES_STATUS_URL}   # e.g. http://glance-services:8080/status.json
+
+infra_checks:
+  - name: npmplus
+    check_url: ${INFRA_CHECK_NPMPLUS_URL}
+  - name: Home Assistant
+    check_url: ${INFRA_CHECK_HOMEASSISTANT_URL}
+
+warning_threshold_percent: 90
