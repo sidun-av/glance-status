@@ -38,8 +38,19 @@ func (a *app) widgetHandler(w http.ResponseWriter, r *http.Request) {
 	var metricList []metrics.Metric
 	var metricsErr error
 	var speedTrend speedtest.Trend
+	var statusFetched status.Fetched
 
-	wg.Add(2)
+	infraChecks := make([]status.InfraCheck, len(a.cfg.InfraChecks))
+	for i, c := range a.cfg.InfraChecks {
+		infraChecks[i] = status.InfraCheck{Name: c.Name, CheckURL: c.CheckURL}
+	}
+	statusCfg := status.Config{
+		ServicesStatusURL:       a.cfg.ServicesStatusURL,
+		InfraChecks:             infraChecks,
+		WarningThresholdPercent: a.cfg.WarningThresholdPercent,
+	}
+
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		metricList, metricsErr = metrics.Fetch(ctx, a.grafanaClient, metrics.Config{
@@ -57,6 +68,10 @@ func (a *app) widgetHandler(w http.ResponseWriter, r *http.Request) {
 			speedTrend = trend
 		}
 	}()
+	go func() {
+		defer wg.Done()
+		statusFetched = status.Fetch(ctx, statusCfg)
+	}()
 	wg.Wait()
 
 	var extraDown []string
@@ -70,15 +85,7 @@ func (a *app) widgetHandler(w http.ResponseWriter, r *http.Request) {
 	for i, m := range metricList {
 		statusInputs[i] = status.MetricInput{Label: m.Label, Percent: m.Percent, HasData: m.HasData}
 	}
-	infraChecks := make([]status.InfraCheck, len(a.cfg.InfraChecks))
-	for i, c := range a.cfg.InfraChecks {
-		infraChecks[i] = status.InfraCheck{Name: c.Name, CheckURL: c.CheckURL}
-	}
-	statusResult := status.Compute(ctx, status.Config{
-		ServicesStatusURL:       a.cfg.ServicesStatusURL,
-		InfraChecks:             infraChecks,
-		WarningThresholdPercent: a.cfg.WarningThresholdPercent,
-	}, statusInputs, extraDown)
+	statusResult := status.Aggregate(statusFetched, statusInputs, a.cfg.WarningThresholdPercent, extraDown)
 
 	values := make([]render.ValueView, 0, len(metricList)+2)
 	for _, m := range metricList {

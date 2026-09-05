@@ -120,6 +120,30 @@ func TestCompute_ErrorTakesPriorityOverWarning(t *testing.T) {
 	}
 }
 
+func TestFetchThenAggregate_AllOperational(t *testing.T) {
+	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"name":"Jellyfin","up":true},{"name":"Kavita","up":true}]`)
+	}))
+	defer svc.Close()
+	infra := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer infra.Close()
+
+	cfg := Config{
+		ServicesStatusURL:       svc.URL,
+		InfraChecks:             []InfraCheck{{Name: "npmplus", CheckURL: infra.URL}},
+		WarningThresholdPercent: 90,
+	}
+	metrics := []MetricInput{{Label: "CPU", Percent: 40, HasData: true}}
+
+	fetched := Fetch(context.Background(), cfg)
+	result := Aggregate(fetched, metrics, cfg.WarningThresholdPercent, nil)
+	if result.Level != OK || result.Message != "All operational" {
+		t.Errorf("Aggregate(Fetch(...)) = %+v, want OK/All operational", result)
+	}
+}
+
 func TestCompute_ExtraDownIncludedInErrorList(t *testing.T) {
 	// extraDown is how the caller (main.go, Task 8) reports "Prometheus +
 	// Grafana" is down when the metrics fetch itself failed entirely —

@@ -49,16 +49,22 @@ const checkTimeout = 3 * time.Second
 
 var httpClient = &http.Client{Timeout: checkTimeout}
 
-// Compute fetches glance-services' aggregate client-service status and this
-// widget's own configured infra checks concurrently, then combines that
-// with already-fetched metric values and any caller-supplied extraDown
-// entries into one prioritized Result: any down service (or extraDown
-// entry) wins (Error, listing every down name); else any metric over the
-// threshold (Warning, listing "Label Percent%"); else OK. If the
-// glance-services status endpoint itself is unreachable, that is reported
-// as its own Error entry ("service status unavailable") rather than
-// guessing the 10 client services' individual states.
-func Compute(ctx context.Context, cfg Config, metrics []MetricInput, extraDown []string) Result {
+// Fetched holds the raw results of the network-bound half of status
+// computation. Kept separate from the pure aggregation step so the fetch
+// can run concurrently with other unrelated fetches (metrics, speedtest)
+// in a shared WaitGroup, instead of waiting for them to finish first.
+type Fetched struct {
+	ClientServices []ServiceStatus
+	ClientErr      error
+	InfraResults   []ServiceStatus
+}
+
+// Fetch performs the network-bound half of status computation: the
+// glance-services status.json call and all configured infra checks,
+// concurrently with each other. Call this alongside other independent
+// fetches (e.g. in the same sync.WaitGroup as metrics.Fetch), then call
+// Aggregate once everything has returned.
+func Fetch(ctx context.Context, cfg Config) Fetched {
 	var wg sync.WaitGroup
 	var clientServices []ServiceStatus
 	var clientErr error
@@ -79,17 +85,27 @@ func Compute(ctx context.Context, cfg Config, metrics []MetricInput, extraDown [
 	}
 	wg.Wait()
 
+	return Fetched{ClientServices: clientServices, ClientErr: clientErr, InfraResults: infraResults}
+}
+
+// Aggregate is the pure half of status computation — no I/O, effectively
+// instant. Combines an already-fetched Fetched with already-fetched metric
+// values and any caller-supplied extraDown entries into one prioritized
+// Result, using the same priority rule Compute always has: any down
+// service (or extraDown entry) wins (Error); else any metric over the
+// threshold (Warning); else OK.
+func Aggregate(fetched Fetched, metrics []MetricInput, warningThresholdPercent float64, extraDown []string) Result {
 	down := append([]string{}, extraDown...)
-	if clientErr != nil {
+	if fetched.ClientErr != nil {
 		down = append(down, "service status unavailable")
 	} else {
-		for _, s := range clientServices {
+		for _, s := range fetched.ClientServices {
 			if !s.Up {
 				down = append(down, s.Name)
 			}
 		}
 	}
-	for _, s := range infraResults {
+	for _, s := range fetched.InfraResults {
 		if !s.Up {
 			down = append(down, s.Name)
 		}
@@ -101,7 +117,7 @@ func Compute(ctx context.Context, cfg Config, metrics []MetricInput, extraDown [
 
 	var warn []string
 	for _, m := range metrics {
-		if m.HasData && m.Percent > cfg.WarningThresholdPercent {
+		if m.HasData && m.Percent > warningThresholdPercent {
 			warn = append(warn, fmt.Sprintf("%s %.0f%%", m.Label, m.Percent))
 		}
 	}
@@ -110,6 +126,25 @@ func Compute(ctx context.Context, cfg Config, metrics []MetricInput, extraDown [
 	}
 
 	return Result{Level: OK, Message: "All operational"}
+}
+
+// Compute fetches glance-services' aggregate client-service status and this
+// widget's own configured infra checks concurrently, then combines that
+// with already-fetched metric values and any caller-supplied extraDown
+// entries into one prioritized Result: any down service (or extraDown
+// entry) wins (Error, listing every down name); else any metric over the
+// threshold (Warning, listing "Label Percent%"); else OK. If the
+// glance-services status endpoint itself is unreachable, that is reported
+// as its own Error entry ("service status unavailable") rather than
+// guessing the 10 client services' individual states.
+//
+// Compute is a convenience wrapper combining Fetch and Aggregate
+// sequentially — for callers that don't need the fetch to run concurrently
+// with anything else. main.go's widgetHandler calls Fetch and Aggregate
+// directly instead (see Fetch's doc comment), so its fetch can join the
+// same WaitGroup as the metrics/speedtest fetches.
+func Compute(ctx context.Context, cfg Config, metrics []MetricInput, extraDown []string) Result {
+	return Aggregate(Fetch(ctx, cfg), metrics, cfg.WarningThresholdPercent, extraDown)
 }
 
 func fetchClientServices(ctx context.Context, url string) ([]ServiceStatus, error) {
