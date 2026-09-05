@@ -49,6 +49,21 @@ const checkTimeout = 3 * time.Second
 
 var httpClient = &http.Client{Timeout: checkTimeout}
 
+// checkClient is used only for infra up/down pings (checkOne), never for
+// fetchClientServices. It never follows redirects: a redirect response
+// (3xx) is itself evidence the service is up and listening, and following
+// it can lead somewhere this check has no business validating — e.g. many
+// self-hosted admin panels (npmplus among them) redirect http->https on
+// the same port using a self-signed certificate, which fails Go's default
+// TLS verification and would otherwise wrongly report a perfectly healthy
+// service as down.
+var checkClient = &http.Client{
+	Timeout: checkTimeout,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
 // Fetched holds the raw results of the network-bound half of status
 // computation. Kept separate from the pure aggregation step so the fetch
 // can run concurrently with other unrelated fetches (metrics, speedtest)
@@ -172,7 +187,7 @@ func checkOne(ctx context.Context, url string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := checkClient.Do(req)
 	if err != nil {
 		return false
 	}

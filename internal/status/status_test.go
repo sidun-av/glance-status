@@ -8,6 +8,23 @@ import (
 	"testing"
 )
 
+func TestCheckOne_RedirectWithoutFollowingCountsAsUp(t *testing.T) {
+	// Regression test: some self-hosted admin panels (npmplus among them)
+	// redirect a plain http:// request to https:// on the same port using
+	// a self-signed certificate. Go's default http.Client follows
+	// redirects and then fails TLS verification, wrongly reporting a
+	// healthy service as down. checkOne must never follow the redirect —
+	// the 3xx response itself is already evidence the service is up.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://this-host-does-not-exist.invalid/", http.StatusPermanentRedirect)
+	}))
+	defer server.Close()
+
+	if !checkOne(context.Background(), server.URL) {
+		t.Error("checkOne should treat a redirect response itself as up, without following it to an unreachable/invalid target")
+	}
+}
+
 func TestCompute_AllOperational(t *testing.T) {
 	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `[{"name":"Jellyfin","up":true},{"name":"Kavita","up":true}]`)
