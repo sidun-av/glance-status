@@ -12,4 +12,8 @@ services:
       - INFRA_CHECK_NPMPLUS_URL=${INFRA_CHECK_NPMPLUS_URL}
       - INFRA_CHECK_HOMEASSISTANT_URL=${INFRA_CHECK_HOMEASSISTANT_URL}
     volumes:
-      - ./glance-status/config.yml:/config.yml:ro
+      - ./config.yml:/config.yml:ro
+    # Must be on the same Docker network as Glance and glance-services for
+    # container-name DNS (e.g. http://glance-status:8080) to resolve — join
+    # the same compose project/stack as those, or add an explicit
+    # `networks:` block pointing at a shared external network.

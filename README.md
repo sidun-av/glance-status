@@ -11,9 +11,10 @@ services.
 Serves an HTML fragment at `/widget` (Glance's custom-widget protocol —
 `Widget-Title` and `Widget-Content-Type: html` response headers). On every
 render it concurrently: queries Grafana's `/api/ds/query` API for CPU/RAM/
-Disk (current value + the same expression with `offset 1h`, so trend needs
-no stored state on this widget's side), queries `speedtest-tracker`'s REST
-API for the 2 most recent results, and queries a `glance-services`-style
+Disk (the current value and, via a second time-shifted query over the same
+unmodified expression, the value from an hour ago — so trend needs no
+stored state on this widget's side), queries `speedtest-tracker`'s REST API
+for the 2 most recent results, and queries a `glance-services`-style
 `/status.json` endpoint plus any extra `infra_checks` you configure. Trend
 arrows are hidden when nothing meaningfully changed (same value after
 rounding) or when there's no valid prior value to compare against.
@@ -40,13 +41,32 @@ filling in real values directly or leaving the `${VAR}` placeholders and
 setting the corresponding environment variables in your compose file (see
 `docker-compose.example.yml`).
 
-### 4. Run it alongside Glance
+### 4. Set the environment variables docker-compose needs
+
+Create a `.env` file next to `docker-compose.example.yml` with the values
+`config.yml`'s `${VAR}` placeholders (and the compose file's own
+`environment:` block) need, for example:
+
+```
+GRAFANA_URL=http://grafana:3000
+GRAFANA_TOKEN=your-grafana-service-account-token
+SPEEDTEST_URL=http://speedtest-tracker:80
+SPEEDTEST_TOKEN=your-speedtest-tracker-api-token
+SERVICES_STATUS_URL=http://glance-services:8080/status.json
+INFRA_CHECK_NPMPLUS_URL=http://your-npmplus-host:81
+INFRA_CHECK_HOMEASSISTANT_URL=http://your-home-assistant-host:8123
+```
+
+`docker compose` reads `.env` automatically from the same directory as the
+compose file — no extra flag needed.
+
+### 5. Run it alongside Glance
 
 ```bash
 docker compose -f docker-compose.example.yml up -d
 ```
 
-### 5. Add the widget to Glance
+### 6. Add the widget to Glance
 
 ```yaml
 - type: extension
