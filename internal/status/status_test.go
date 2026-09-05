@@ -55,8 +55,8 @@ func TestCompute_DownInfraCheckIsError(t *testing.T) {
 	defer infra.Close()
 
 	cfg := Config{
-		ServicesStatusURL: svc.URL,
-		InfraChecks:       []InfraCheck{{Name: "npmplus", CheckURL: infra.URL}},
+		ServicesStatusURL:       svc.URL,
+		InfraChecks:             []InfraCheck{{Name: "npmplus", CheckURL: infra.URL}},
 		WarningThresholdPercent: 90,
 	}
 	result := Compute(context.Background(), cfg, nil, nil)
