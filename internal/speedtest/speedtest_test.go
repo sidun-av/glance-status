@@ -16,9 +16,13 @@ func TestFetch_TrendComputation(t *testing.T) {
 		if r.URL.Query().Get("sort") != "-created_at" || r.URL.Query().Get("per_page") != "2" {
 			t.Errorf("unexpected query: %s", r.URL.RawQuery)
 		}
+		// download: 150 Mbps -> 150 * 1_000_000 / 8 = 18750000 bytes/s
+		// upload:   20 Mbps  -> 20  * 1_000_000 / 8 = 2500000 bytes/s
+		// download: 100 Mbps -> 12500000 bytes/s
+		// upload:   22 Mbps  -> 2750000 bytes/s
 		fmt.Fprint(w, `{"data": [
-			{"download": 150, "upload": 20, "created_at": "2026-09-05T12:00:00Z"},
-			{"download": 100, "upload": 22, "created_at": "2026-09-05T11:00:00Z"}
+			{"download": 18750000, "upload": 2500000, "created_at": "2026-09-05T12:00:00Z"},
+			{"download": 12500000, "upload": 2750000, "created_at": "2026-09-05T11:00:00Z"}
 		]}`)
 	}))
 	defer server.Close()
@@ -38,9 +42,11 @@ func TestFetch_TrendComputation(t *testing.T) {
 
 func TestFetch_StaleComparisonHidesArrow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// download: 150 Mbps -> 18750000 bytes/s, 100 Mbps -> 12500000 bytes/s
+		// upload:   20 Mbps  -> 2500000 bytes/s,  22 Mbps  -> 2750000 bytes/s
 		fmt.Fprint(w, `{"data": [
-			{"download": 150, "upload": 20, "created_at": "2026-09-05T12:00:00Z"},
-			{"download": 100, "upload": 22, "created_at": "2026-09-05T08:00:00Z"}
+			{"download": 18750000, "upload": 2500000, "created_at": "2026-09-05T12:00:00Z"},
+			{"download": 12500000, "upload": 2750000, "created_at": "2026-09-05T08:00:00Z"}
 		]}`)
 	}))
 	defer server.Close()
@@ -60,9 +66,12 @@ func TestFetch_StaleComparisonHidesArrow(t *testing.T) {
 
 func TestFetch_RoundingHidesArrowForSubUnitChange(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 150.4 Mbps -> 150.4 * 1_000_000 / 8 = 18800000 bytes/s
+		// 149.6 Mbps -> 149.6 * 1_000_000 / 8 = 18700000 bytes/s
+		// upload: 20 Mbps -> 2500000 bytes/s (both rows, unchanged)
 		fmt.Fprint(w, `{"data": [
-			{"download": 150.4, "upload": 20, "created_at": "2026-09-05T12:00:00Z"},
-			{"download": 149.6, "upload": 20, "created_at": "2026-09-05T11:00:00Z"}
+			{"download": 18800000, "upload": 2500000, "created_at": "2026-09-05T12:00:00Z"},
+			{"download": 18700000, "upload": 2500000, "created_at": "2026-09-05T11:00:00Z"}
 		]}`)
 	}))
 	defer server.Close()
@@ -95,7 +104,8 @@ func TestFetch_NoData(t *testing.T) {
 
 func TestFetch_OnlyOneResultShowsValueNoArrow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"data": [{"download": 150, "upload": 20, "created_at": "2026-09-05T12:00:00Z"}]}`)
+		// download: 150 Mbps -> 18750000 bytes/s, upload: 20 Mbps -> 2500000 bytes/s
+		fmt.Fprint(w, `{"data": [{"download": 18750000, "upload": 2500000, "created_at": "2026-09-05T12:00:00Z"}]}`)
 	}))
 	defer server.Close()
 
@@ -118,5 +128,34 @@ func TestFetch_NonOKStatusReturnsError(t *testing.T) {
 	client := New(server.URL, "bad-token")
 	if _, err := client.Fetch(context.Background()); err == nil {
 		t.Fatal("want error for a 401 response")
+	}
+}
+
+func TestFetch_MalformedTimestampStillReturnsValues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// download: 150 Mbps -> 18750000 bytes/s, 100 Mbps -> 12500000 bytes/s
+		// upload:   20 Mbps  -> 2500000 bytes/s,  22 Mbps  -> 2750000 bytes/s
+		// latest row's created_at is malformed -> timestamp unknown, but the
+		// download/upload values must still come through.
+		fmt.Fprint(w, `{"data": [
+			{"download": 18750000, "upload": 2500000, "created_at": "not-a-date"},
+			{"download": 12500000, "upload": 2750000, "created_at": "2026-09-05T11:00:00Z"}
+		]}`)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "test-token")
+	trend, err := client.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if !trend.Download.HasData || trend.Download.Mbps != 150 {
+		t.Errorf("Download = %+v, want HasData=true, Mbps=150 despite malformed created_at", trend.Download)
+	}
+	if !trend.Upload.HasData || trend.Upload.Mbps != 20 {
+		t.Errorf("Upload = %+v, want HasData=true, Mbps=20 despite malformed created_at", trend.Upload)
+	}
+	if trend.Download.ShowArrow || trend.Upload.ShowArrow {
+		t.Errorf("expected no arrows when the latest result's timestamp is unknown, got %+v", trend)
 	}
 }

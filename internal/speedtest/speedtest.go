@@ -58,6 +58,16 @@ type result struct {
 	downloadMbps float64
 	uploadMbps   float64
 	createdAt    time.Time
+	timeKnown    bool
+}
+
+// mbpsFromRawBytesPerSecond converts speedtest-tracker's raw download/upload
+// API field (bytes per second — confirmed against the upstream source: its
+// own API separately derives download_bits as round(raw*8), which only
+// makes sense if the plain field is bytes, not already bits or Mbps) into
+// megabits per second for display.
+func mbpsFromRawBytesPerSecond(raw float64) float64 {
+	return raw * 8 / 1_000_000
 }
 
 // Fetch retrieves the 2 most recent speedtest-tracker results and derives a
@@ -85,7 +95,7 @@ func (c *Client) Fetch(ctx context.Context) (Trend, error) {
 		return trend, nil
 	}
 	prev := results[1]
-	if latest.createdAt.Sub(prev.createdAt) > staleAfter {
+	if !latest.timeKnown || !prev.timeKnown || latest.createdAt.Sub(prev.createdAt) > staleAfter {
 		return trend, nil
 	}
 
@@ -131,11 +141,15 @@ func (c *Client) latestResults(ctx context.Context, n int) ([]result, error) {
 
 	out := make([]result, len(parsed.Data))
 	for i, r := range parsed.Data {
-		t, err := time.Parse(time.RFC3339, r.CreatedAt)
-		if err != nil {
-			return nil, fmt.Errorf("parse created_at %q: %w", r.CreatedAt, err)
+		res := result{
+			downloadMbps: mbpsFromRawBytesPerSecond(r.Download),
+			uploadMbps:   mbpsFromRawBytesPerSecond(r.Upload),
 		}
-		out[i] = result{downloadMbps: r.Download, uploadMbps: r.Upload, createdAt: t}
+		if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
+			res.createdAt = t
+			res.timeKnown = true
+		}
+		out[i] = res
 	}
 	return out, nil
 }

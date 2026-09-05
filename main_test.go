@@ -28,7 +28,10 @@ func TestWidgetHandler_EndToEnd(t *testing.T) {
 	defer grafanaSrv.Close()
 
 	speedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"data": [{"download": 150, "upload": 20, "created_at": "2026-09-05T12:00:00Z"}]}`)
+		// 150 Mbps download, 20 Mbps upload, expressed as raw bytes/second
+		// (speedtest-tracker's actual API unit): 150*1_000_000/8 = 18750000,
+		// 20*1_000_000/8 = 2500000.
+		fmt.Fprint(w, `{"data": [{"download": 18750000, "upload": 2500000, "created_at": "2026-09-05T12:00:00Z"}]}`)
 	}))
 	defer speedSrv.Close()
 
