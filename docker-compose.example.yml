@@ -1,0 +1,15 @@
+services:
+  glance-status:
+    image: ghcr.io/sidun-av/glance-status:latest
+    restart: unless-stopped
+    environment:
+      - TITLE=${TITLE:-}
+      - GRAFANA_URL=${GRAFANA_URL}
+      - GRAFANA_TOKEN=${GRAFANA_TOKEN}
+      - SPEEDTEST_URL=${SPEEDTEST_URL}
+      - SPEEDTEST_TOKEN=${SPEEDTEST_TOKEN}
+      - SERVICES_STATUS_URL=${SERVICES_STATUS_URL}
+      - INFRA_CHECK_NPMPLUS_URL=${INFRA_CHECK_NPMPLUS_URL}
+      - INFRA_CHECK_HOMEASSISTANT_URL=${INFRA_CHECK_HOMEASSISTANT_URL}
+    volumes:
+      - ./glance-status/config.yml:/config.yml:ro
